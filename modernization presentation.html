@@ -117,29 +117,45 @@
          /* Print Styles */
          @media print {
             body {
-                background-color: #fff;
+                background-color: #fff !important;
             }
-            #presentation-wrapper {
-                margin: 0;
-                box-shadow: none;
-                border: none;
+            /* Hide all direct children of body except the presentation wrapper */
+            body > *:not(#presentation-wrapper) {
+                display: none;
             }
-            #presentation .bg-gray-800 {
+            #presentation-wrapper, #presentation, .flex-grow {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+                background-color: #fff !important;
+            }
+            #presentation .bg-gray-800 { /* Hide controls */
                 display: none;
             }
             .slide {
                 display: block !important;
                 opacity: 1 !important;
                 page-break-after: always;
-                height: 95vh; /* Adjust height for printing */
-                box-shadow: none;
-                border: 1px solid #ccc;
+                height: auto;
+                min-height: 95vh;
+                width: 100%;
+                overflow: visible;
+                border: 1px solid #eee;
+                border-radius: 0;
+            }
+            .slide:last-of-type {
+                page-break-after: auto;
             }
             .gemini-btn {
                 display: none;
             }
-            .slide-content {
-                 padding: 1rem;
+            .card {
+                box-shadow: none;
+                border: 1px solid #ddd;
             }
          }
     </style>
