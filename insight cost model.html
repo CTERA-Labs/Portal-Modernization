@@ -187,7 +187,7 @@
             transition: background-color 0.2s;
         }
 
-        .results-table tbody tr.clickable-row:hover {
+        .results-table tbody tr[data-architecture]:hover {
             background-color: #f1f1f1;
             cursor: pointer;
         }
@@ -282,6 +282,9 @@
         .breakdown-table tr.component-row:hover {
             background-color: #f7f7f7;
         }
+        .breakdown-table .detail-row td {
+            text-align: left;
+        }
         .calculation-detail {
             background-color: #fafafa;
             padding: 1rem;
@@ -289,6 +292,7 @@
             font-size: 0.9rem;
             white-space: pre-wrap;
             border-top: 1px dashed var(--border-color);
+            text-align: left;
         }
     </style>
 </head>
@@ -534,6 +538,9 @@
             };
 
             const formatNumber = (value, fractionDigits = 2) => {
+                if (typeof value !== 'number' || isNaN(value)) {
+                    return 'N/A';
+                }
                 return value.toLocaleString('en-US', {
                     minimumFractionDigits: fractionDigits,
                     maximumFractionDigits: fractionDigits
@@ -702,10 +709,7 @@
                         </tr>
                         <tr class="detail-row" style="display:none;">
                             <td colspan="2">
-                                <div class="calculation-detail">
-                                    <strong>Formula:</strong> ${c.formula}<br>
-                                    <strong>Calculation:</strong> ${c.details}
-                                </div>
+                                <div class="calculation-detail"><strong>Formula:</strong> ${c.formula}<br><strong>Calculation:</strong> ${c.details}</div>
                             </td>
                         </tr>`;
                 });
@@ -985,7 +989,6 @@
             resultsTbody.addEventListener('click', (event) => {
                 const row = event.target.closest('tr');
                 if (row && row.dataset.architecture) {
-                    row.classList.add('clickable-row');
                     showBreakdownModal(row.dataset.architecture);
                 }
             });
@@ -1008,5 +1011,9 @@
 
 </body>
 </html>
+
+
+
+
 
 
