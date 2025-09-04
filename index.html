@@ -323,7 +323,7 @@
                     </div>
                     <div class="input-group">
                         <label for="iceberg-retention">Iceberg Retention (Days)</label>
-                        <input type="number" id="iceberg-retention" value="1095">
+                        <input type="number" id="iceberg-retention" value="365">
                     </div>
                 </div>
 
@@ -429,10 +429,10 @@
         <div class="modal-content">
             <span class="close-btn" id="close-iceberg-disclaimer-modal">&times;</span>
             <h2>Iceberg Storage Cost Calculation</h2>
-            <p>The storage for the Iceberg + Athena architecture grows every single day for the entire retention period (e.g., 3 years). This means the cost in Month 1 will be much lower than the cost in Month 36.</p>
-            <p>To account for this without creating a complex month-by-month forecast, the model uses the <strong>average storage volume</strong> over the entire retention period.</p>
-            <p><strong>Formula:</strong> Average Storage = (Initial Size) + (Total Growth over Period / 2)</p>
-            <p>This method gives a fair, "amortized" monthly cost for the Iceberg tier. It avoids the inaccuracy of charging for the full 3 years of data from the very first month, while still providing a single, representative monthly figure that can be used for budgeting and comparison.</p>
+            <p>The storage for the Iceberg + Athena architecture grows every single day until it reaches the end of its retention period (e.g., 3 years).</p>
+            <p>This calculation is based on the <strong>total storage volume at the end of the retention period</strong>. The resulting monthly cost represents the "steady-state" or "peak" cost you will pay once the archive is fully mature.</p>
+            <p><strong>Formula:</strong> Peak Storage = (Initial Size) + (Total Growth over Period)</p>
+            <p>This method is useful for understanding the maximum budget required for the storage component once it is fully scaled.</p>
         </div>
     </div>
 
@@ -448,7 +448,7 @@
                 <li><strong>Data Volume Sizing:</strong> The calculation starts by determining the daily data ingest volume based on the number of files and the daily change rate. For the Hot and Warm tiers, it calculates a "steady-state" volume capped by the retention period, not an ever-growing total.</li>
                 <li><strong>Dynamic Node Sizing:</strong> A key feature is the dynamic selection of OpenSearch EC2 instance types (m6g.large, xlarge, 2xlarge) based on the calculated storage requirements for the Hot and Warm tiers. This ensures cost-effectiveness by avoiding over-provisioning.</li>
                 <li><strong>Replica-Aware Hot Tier Costs:</strong> The model explicitly accounts for OpenSearch replicas in the Hot Tier. Both storage and compute costs for the hot tier are scaled based on the replica count, ensuring that the costs for data redundancy and high availability are accurately reflected.</li>
-                <li><strong>Amortized Iceberg Storage Cost:</strong> For the Iceberg architecture, storage grows daily over the entire retention period. To provide a stable monthly cost for budgeting, the model calculates the cost based on the <em>average</em> storage volume over the retention period, not the final total. This provides a fair, amortized monthly figure.</li>
+                <li><strong>Peak Iceberg Storage Cost:</strong> For the Iceberg architecture, storage grows daily. This model calculates the cost based on the <strong>total storage volume at the end of the retention period</strong>. This provides a "peak cost" or "steady-state" monthly figure, representing the cost you will pay once the archive is fully mature.</li>
             </ol>
 
             <h3>Key Configuration Parameters</h3>
@@ -462,7 +462,7 @@
              <h3>Architecture Cost Breakdown</h3>
             <ul>
                 <li><strong>OpenSearch Only:</strong> Cost includes EMR ingestion, OpenSearch Hot (compute + storage, including replicas), and Warm (compute + S3 storage) tiers. Retention is limited to the Hot + Warm periods.</li>
-                <li><strong>Iceberg + Athena:</strong> Cost includes EMR ingestion, the amortized cost of S3 storage for the long-term archive, and the projected cost of Athena queries.</li>
+                <li><strong>Iceberg + Athena:</strong> Cost includes EMR ingestion, the peak cost of S3 storage for the long-term archive, and the projected cost of Athena queries.</li>
                 <li><strong>Hybrid (Both):</strong> This is the most comprehensive and costly option, summing all components from both the OpenSearch Only and Iceberg + Athena architectures.</li>
             </ul>
         </div>
@@ -549,7 +549,6 @@
 
             // --- Core Calculation Logic ---
             function runCalculations() {
-                // ... (rest of the calculation logic is unchanged and goes here) ...
                 // Step 1: Gather Inputs
                  inputValues = {
                     numberOfFiles: parseFileCount(document.getElementById('num-files').value),
@@ -572,10 +571,12 @@
                 const totalDailyIngestGB = dailyMetadataIngestGB + dailyAuditLogIngestGB;
                 const maxHotDataGB = totalDailyIngestGB * inputValues.hotTierDays;
                 const maxWarmDataGB = totalDailyIngestGB * inputValues.warmTierDays;
+                const icebergTotalStorageGB = totalMetadataSizeGB + (totalDailyIngestGB * inputValues.icebergRetentionDays);
                 
                 calculationDetails.volume = {
                     totalMetadataSizeGB, dailyChangedFiles, dailyMetadataIngestGB,
-                    dailyAuditLogIngestGB, totalDailyIngestGB, maxHotDataGB, maxWarmDataGB
+                    dailyAuditLogIngestGB, totalDailyIngestGB, maxHotDataGB, maxWarmDataGB,
+                    icebergTotalStorageGB // Added for breakdown
                 };
 
                 // Step B: Dynamic OpenSearch Node Sizing
@@ -608,12 +609,10 @@
                 // OS Warm
                 const warmComputeCost = warmNodeCount * awsCosts.ec2[warmInstanceType] * 24 * 30.44;
                 const warmStorageS3Cost = warmStorageGB * awsCosts.storage.s3Standard;
-                // Iceberg Archive
-                const icebergTotalStorageGB = totalMetadataSizeGB + (totalDailyIngestGB * inputValues.icebergRetentionDays);
-                const icebergAverageStorageGB = totalMetadataSizeGB + (icebergTotalStorageGB - totalMetadataSizeGB) / 2;
-                const icebergStorageCost = icebergAverageStorageGB * awsCosts.storage.s3Standard;
-                // Athena
-                const athenaQueryCost = (icebergAverageStorageGB / 1024) * (inputValues.athenaScanPercent / 100) * 200 * awsCosts.athena.perTBScanned;
+                // Iceberg Archive (Using PEAK/TOTAL cost)
+                const icebergStorageCost = icebergTotalStorageGB * awsCosts.storage.s3Standard;
+                // Athena (Using PEAK/TOTAL cost)
+                const athenaQueryCost = (icebergTotalStorageGB / 1024) * (inputValues.athenaScanPercent / 100) * 200 * awsCosts.athena.perTBScanned;
 
                 calculationDetails.costs = {
                      emrCost, hotComputeCost, hotStorageCost, warmComputeCost,
@@ -638,8 +637,7 @@
             
             // --- Modal Display Logic ---
             function showBreakdownModal(architecture) {
-                 // ... (breakdown logic unchanged, goes here) ...
-                 const { volume, sizing, costs } = calculationDetails;
+                const { volume, sizing, costs } = calculationDetails;
                 let title = '';
                 let components = [];
 
@@ -676,14 +674,14 @@
                 const icebergStorageComponent = {
                     name: 'Iceberg Archive Storage (S3)',
                     cost: costs.icebergStorageCost,
-                    formula: 'Average Archive GB * S3 Price/GB',
-                    details: `${formatNumber(volume.icebergAverageStorageGB)} GB (avg) * ${formatCurrency(awsCosts.storage.s3Standard)}/GB`
+                    formula: 'Peak Archive GB * S3 Price/GB',
+                    details: `${formatNumber(volume.icebergTotalStorageGB)} GB (peak) * ${formatCurrency(awsCosts.storage.s3Standard)}/GB`
                 };
                 const athenaComponent = {
                     name: 'Athena Query Cost',
                     cost: costs.athenaQueryCost,
-                    formula: '(Avg Archive TB * Scan %) * Queries/mo * Price/TB',
-                    details: `(${formatNumber(volume.icebergAverageStorageGB / 1024, 2)} TB * ${inputValues.athenaScanPercent}%) * 200 queries * ${formatCurrency(awsCosts.athena.perTBScanned)}/TB`
+                    formula: '(Peak Archive TB * Scan %) * Queries/mo * Price/TB',
+                    details: `(${formatNumber(volume.icebergTotalStorageGB / 1024, 2)} TB * ${inputValues.athenaScanPercent}%) * 200 queries * ${formatCurrency(awsCosts.athena.perTBScanned)}/TB`
                 };
 
                 if (architecture === 'os') {
@@ -951,7 +949,7 @@
                 doc.text("Iceberg + Athena:", leftMargin, yPos);
                 yPos += 5;
                 doc.setFont(undefined, 'normal');
-                let icebergDisclaimer = doc.splitTextToSize('To provide a stable monthly cost for growing storage, the model uses the average storage volume over the entire retention period, giving a fair, "amortized" monthly cost.', 180);
+                let icebergDisclaimer = doc.splitTextToSize('This model calculates cost based on the total storage at the end of the retention period to show the "peak" or "steady-state" monthly cost.', 180);
                 checkPageBreak();
                 doc.text(icebergDisclaimer, leftMargin, yPos);
 
@@ -1011,9 +1009,5 @@
 
 </body>
 </html>
-
-
-
-
 
 
