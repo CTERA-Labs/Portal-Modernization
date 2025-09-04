@@ -449,6 +449,7 @@
                 <li><strong>Dynamic Node Sizing:</strong> A key feature is the dynamic selection of OpenSearch EC2 instance types (m6g.large, xlarge, 2xlarge) based on the calculated storage requirements for the Hot and Warm tiers. This ensures cost-effectiveness by avoiding over-provisioning.</li>
                 <li><strong>Replica-Aware Hot Tier Costs:</strong> The model explicitly accounts for OpenSearch replicas in the Hot Tier. Both storage and compute costs for the hot tier are scaled based on the replica count, ensuring that the costs for data redundancy and high availability are accurately reflected.</li>
                 <li><strong>Peak Iceberg Storage Cost:</strong> For the Iceberg architecture, storage grows daily. This model calculates the cost based on the <strong>total storage volume at the end of the retention period</strong>. This provides a "peak cost" or "steady-state" monthly figure, representing the cost you will pay once the archive is fully mature.</li>
+                <li><strong>Fixed Infrastructure Cost:</strong> A fixed monthly cost of $400 is added to all architectures to account for essential, shared services such as ECS, management EC2 instances, and RDS that are required regardless of data volume.</li>
             </ol>
 
             <h3>Key Configuration Parameters</h3>
@@ -461,8 +462,8 @@
             </ul>
              <h3>Architecture Cost Breakdown</h3>
             <ul>
-                <li><strong>OpenSearch Only:</strong> Cost includes EMR ingestion, OpenSearch Hot (compute + storage, including replicas), and Warm (compute + S3 storage) tiers. Retention is limited to the Hot + Warm periods.</li>
-                <li><strong>Iceberg + Athena:</strong> Cost includes EMR ingestion, the peak cost of S3 storage for the long-term archive, and the projected cost of Athena queries.</li>
+                <li><strong>OpenSearch Only:</strong> Cost includes EMR ingestion, OpenSearch Hot (compute + storage, including replicas), and Warm (compute + S3 storage) tiers, plus a fixed infrastructure cost. Retention is limited to the Hot + Warm periods.</li>
+                <li><strong>Iceberg + Athena:</strong> Cost includes EMR ingestion, the peak cost of S3 storage for the long-term archive, the projected cost of Athena queries, and a fixed infrastructure cost.</li>
                 <li><strong>Hybrid (Both):</strong> This is the most comprehensive and costly option, summing all components from both the OpenSearch Only and Iceberg + Athena architectures.</li>
             </ul>
         </div>
@@ -601,6 +602,7 @@
                 };
 
                 // Step C: Monthly Cost Component Calculation
+                const fixedInfrastructureCost = 400; // For ECS, EC2, RDS
                 // Ingestion
                 const emrCost = (inputValues.numberOfFiles / 1e9) * awsCosts.emrServerless.costPerBillionFiles * 30.44;
                 // OS Hot
@@ -616,12 +618,13 @@
 
                 calculationDetails.costs = {
                      emrCost, hotComputeCost, hotStorageCost, warmComputeCost,
-                     warmStorageS3Cost, icebergStorageCost, athenaQueryCost
+                     warmStorageS3Cost, icebergStorageCost, athenaQueryCost,
+                     fixedInfrastructureCost
                 };
 
                 // Step D: Aggregate Costs for Each Architecture
-                const osMonthly = emrCost + hotComputeCost + hotStorageCost + warmComputeCost + warmStorageS3Cost;
-                const icebergMonthly = emrCost + icebergStorageCost + athenaQueryCost;
+                const osMonthly = emrCost + hotComputeCost + hotStorageCost + warmComputeCost + warmStorageS3Cost + fixedInfrastructureCost;
+                const icebergMonthly = emrCost + icebergStorageCost + athenaQueryCost + fixedInfrastructureCost;
                 const hybridMonthly = osMonthly + icebergStorageCost + athenaQueryCost;
 
                 // Display Results
@@ -683,16 +686,22 @@
                     formula: '(Peak Archive TB * Scan %) * Queries/mo * Price/TB',
                     details: `(${formatNumber(volume.icebergTotalStorageGB / 1024, 2)} TB * ${inputValues.athenaScanPercent}%) * 200 queries * ${formatCurrency(awsCosts.athena.perTBScanned)}/TB`
                 };
+                const fixedInfraComponent = {
+                    name: 'Fixed Infrastructure Cost',
+                    cost: costs.fixedInfrastructureCost,
+                    formula: 'Fixed monthly cost for essential shared services.',
+                    details: `Flat rate for ECS, management EC2, and RDS infrastructure: ${formatCurrency(400)}`
+                };
 
                 if (architecture === 'os') {
                     title = 'OpenSearch Only Breakdown';
-                    components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component];
+                    components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, fixedInfraComponent];
                 } else if (architecture === 'iceberg') {
                     title = 'Iceberg + Athena Breakdown';
-                    components = [emrComponent, icebergStorageComponent, athenaComponent];
+                    components = [emrComponent, icebergStorageComponent, athenaComponent, fixedInfraComponent];
                 } else {
                     title = 'Hybrid Breakdown';
-                    components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, icebergStorageComponent, athenaComponent];
+                    components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, icebergStorageComponent, athenaComponent, fixedInfraComponent];
                 }
                 
                 breakdownTitle.textContent = title;
@@ -874,16 +883,18 @@
                     const warmS3Component = { name: 'OS Warm Storage (S3)', cost: costs.warmStorageS3Cost };
                     const icebergStorageComponent = { name: 'Iceberg Archive Storage (S3)', cost: costs.icebergStorageCost };
                     const athenaComponent = { name: 'Athena Query Cost', cost: costs.athenaQueryCost };
+                    const fixedInfraComponent = { name: 'Fixed Infrastructure Cost', cost: costs.fixedInfrastructureCost };
+
 
                     if (architecture === 'os') {
                         title = 'OpenSearch Only Breakdown';
-                        components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component];
+                        components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, fixedInfraComponent];
                     } else if (architecture === 'iceberg') {
                         title = 'Iceberg + Athena Breakdown';
-                        components = [emrComponent, icebergStorageComponent, athenaComponent];
+                        components = [emrComponent, icebergStorageComponent, athenaComponent, fixedInfraComponent];
                     } else {
                         title = 'Hybrid (Both) Breakdown';
-                        components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, icebergStorageComponent, athenaComponent];
+                        components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, icebergStorageComponent, athenaComponent, fixedInfraComponent];
                     }
 
                     doc.setFontSize(12);
@@ -1009,5 +1020,4 @@
 
 </body>
 </html>
-
 
