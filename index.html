@@ -294,6 +294,17 @@
             border-top: 1px dashed var(--border-color);
             text-align: left;
         }
+        
+        #export-options-modal .input-group {
+            align-items: flex-start;
+            gap: 1rem;
+        }
+         #export-options-modal .input-group label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: normal;
+        }
     </style>
 </head>
 <body>
@@ -477,6 +488,22 @@
             <div id="breakdown-content"></div>
         </div>
     </div>
+    
+    <!-- PDF Export Options Modal -->
+    <div id="export-options-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-export-options-modal">&times;</span>
+            <h2>Select Architectures for PDF Export</h2>
+            <div class="input-group">
+                <label><input type="checkbox" id="export-os" value="os" checked> OpenSearch Only</label>
+                <label><input type="checkbox" id="export-iceberg" value="iceberg" checked> Iceberg + Athena</label>
+                <label><input type="checkbox" id="export-hybrid" value="hybrid" checked> Hybrid (Both)</label>
+            </div>
+            <div class="button-group">
+                <button id="generate-pdf-btn" class="btn btn-primary">Generate PDF</button>
+            </div>
+        </div>
+    </div>
 
 
     <script>
@@ -507,6 +534,10 @@
             const closeBreakdownModalBtn = document.getElementById('close-breakdown-modal');
             const breakdownTitle = document.getElementById('breakdown-title');
             const breakdownContent = document.getElementById('breakdown-content');
+            const exportOptionsModal = document.getElementById('export-options-modal');
+            const closeExportOptionsModalBtn = document.getElementById('close-export-options-modal');
+            const generatePdfBtn = document.getElementById('generate-pdf-btn');
+
 
             // --- Global Variables ---
             const awsCosts = {
@@ -778,23 +809,19 @@
                 document.body.removeChild(link);
             }
 
-            function exportToPdf() {
-                if (Object.keys(calculationDetails).length === 0) {
-                    alert("Please run the calculation first before exporting.");
-                    return;
-                }
-
+            function generateAndExportPdf(selectedArchitectures) {
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
 
                 let yPos = 20;
                 const leftMargin = 15;
                 const lineSpacing = 7;
+                const lineSpacingSmall = 5;
                 const pageHeight = doc.internal.pageSize.height;
                 const bottomMargin = 20;
 
-                const checkPageBreak = () => {
-                    if (yPos > pageHeight - bottomMargin) {
+                const checkPageBreak = (spaceNeeded = lineSpacing) => {
+                    if (yPos + spaceNeeded > pageHeight - bottomMargin) {
                         doc.addPage();
                         yPos = 20;
                     }
@@ -806,24 +833,32 @@
                 yPos += lineSpacing * 2;
 
                 // Configuration section
+                checkPageBreak();
                 doc.setFontSize(14);
                 doc.text("Configuration Used", leftMargin, yPos);
                 yPos += lineSpacing;
-
+                
                 doc.setFontSize(10);
-                const configText = [
+                let configText = [
                     `Number of Files: ${document.getElementById('num-files').value}`,
-                    `Hot Tier Retention: ${inputValues.hotTierDays} Days`,
-                    `Warm Tier Retention: ${inputValues.warmTierDays} Days`,
-                    `Iceberg Retention: ${inputValues.icebergRetentionDays} Days`,
                     `Metadata Record Size: ${inputValues.metadataRecordSizeKB} KB`,
                     `Audit Log Events per Change: ${inputValues.auditLogEventsPerChange}`,
                     `Audit Log Record Size: ${inputValues.auditLogRecordSizeKB} KB`,
                     `Daily Change Rate: ${inputValues.dailyChangeRatePercent}%`,
-                    `OpenSearch Replica Count: ${inputValues.replicaCount}`,
-                    `Athena Query Scan: ${inputValues.athenaScanPercent}%`
                 ];
-                configText.forEach(line => {
+
+                if (selectedArchitectures.os || selectedArchitectures.hybrid) {
+                    configText.push(`Hot Tier Retention: ${inputValues.hotTierDays} Days`);
+                    configText.push(`Warm Tier Retention: ${inputValues.warmTierDays} Days`);
+                    configText.push(`OpenSearch Replica Count: ${inputValues.replicaCount}`);
+                }
+                if (selectedArchitectures.iceberg || selectedArchitectures.hybrid) {
+                    configText.push(`Iceberg Retention: ${inputValues.icebergRetentionDays} Days`);
+                    configText.push(`Athena Query Scan: ${inputValues.athenaScanPercent}%`);
+                }
+                const uniqueConfigText = [...new Set(configText)];
+                
+                uniqueConfigText.forEach(line => {
                     checkPageBreak();
                     doc.text(line, leftMargin, yPos);
                     yPos += lineSpacing;
@@ -838,11 +873,15 @@
                 yPos += lineSpacing;
 
                 doc.setFontSize(10);
+                const allResults = [
+                    { key: 'os', data: ['OpenSearch Only', document.getElementById('os-monthly').textContent, document.getElementById('os-3year').textContent] },
+                    { key: 'iceberg', data: ['Iceberg + Athena', document.getElementById('iceberg-monthly').textContent, document.getElementById('iceberg-3year').textContent] },
+                    { key: 'hybrid', data: ['Hybrid (Both)', document.getElementById('hybrid-monthly').textContent, document.getElementById('hybrid-3year').textContent] }
+                ];
+
                 const results = [
                     ["Architecture", "Monthly Cost", "3-Year Total Cost"],
-                    ['OpenSearch Only', document.getElementById('os-monthly').textContent, document.getElementById('os-3year').textContent],
-                    ['Iceberg + Athena', document.getElementById('iceberg-monthly').textContent, document.getElementById('iceberg-3year').textContent],
-                    ['Hybrid (Both)', document.getElementById('hybrid-monthly').textContent, document.getElementById('hybrid-3year').textContent]
+                    ...allResults.filter(r => selectedArchitectures[r.key]).map(r => r.data)
                 ];
 
                 const colWidths = [80, 50, 50];
@@ -864,18 +903,19 @@
                 yPos += lineSpacing * 2;
                 checkPageBreak();
 
-                doc.setFontSize(14);
-                doc.setFont(undefined, 'bold');
-                doc.text("Detailed Cost Breakdowns", leftMargin, yPos);
-                yPos += lineSpacing * 1.5;
+                if (results.length > 1) {
+                    doc.setFontSize(14);
+                    doc.setFont(undefined, 'bold');
+                    doc.text("Detailed Cost Breakdowns", leftMargin, yPos);
+                    yPos += lineSpacing * 1.5;
+                }
 
                 const drawBreakdownTable = (architecture) => {
                     checkPageBreak();
-                    const { volume, sizing, costs } = calculationDetails;
+                    const { costs, sizing } = calculationDetails;
                     let title = '';
                     let components = [];
 
-                    // Logic to get components for each architecture (reused from modal)
                     const emrComponent = { name: 'EMR Serverless Ingestion', cost: costs.emrCost };
                     const hotComputeComponent = { name: `OS Hot Compute (${sizing.hotNodeCount} x ${sizing.hotInstanceType})`, cost: costs.hotComputeCost };
                     const hotStorageComponent = { name: 'OS Hot Storage (EBS GP3)', cost: costs.hotStorageCost };
@@ -885,14 +925,13 @@
                     const athenaComponent = { name: 'Athena Query Cost', cost: costs.athenaQueryCost };
                     const fixedInfraComponent = { name: 'Fixed Infrastructure Cost', cost: costs.fixedInfrastructureCost };
 
-
                     if (architecture === 'os') {
                         title = 'OpenSearch Only Breakdown';
                         components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, fixedInfraComponent];
                     } else if (architecture === 'iceberg') {
                         title = 'Iceberg + Athena Breakdown';
                         components = [emrComponent, icebergStorageComponent, athenaComponent, fixedInfraComponent];
-                    } else {
+                    } else { // hybrid
                         title = 'Hybrid (Both) Breakdown';
                         components = [emrComponent, hotComputeComponent, hotStorageComponent, warmComputeComponent, warmS3Component, icebergStorageComponent, athenaComponent, fixedInfraComponent];
                     }
@@ -933,39 +972,178 @@
                     yPos += lineSpacing * 2.5;
                 };
                 
-                drawBreakdownTable('os');
-                drawBreakdownTable('iceberg');
-                drawBreakdownTable('hybrid');
+                if (selectedArchitectures.os) drawBreakdownTable('os');
+                if (selectedArchitectures.iceberg) drawBreakdownTable('iceberg');
+                if (selectedArchitectures.hybrid) drawBreakdownTable('hybrid');
 
 
                 // Disclaimers
-                checkPageBreak();
-                yPos += lineSpacing;
-                doc.setFontSize(12);
-                doc.setFont(undefined, 'bold');
-                doc.text("Notes & Disclaimers", leftMargin, yPos);
-                yPos += lineSpacing;
+                if ((selectedArchitectures.os || selectedArchitectures.iceberg || selectedArchitectures.hybrid) && yPos < pageHeight - 60 ){
+                     checkPageBreak();
+                     yPos += lineSpacing;
+                     doc.setFontSize(12);
+                     doc.setFont(undefined, 'bold');
+                     doc.text("Notes & Disclaimers", leftMargin, yPos);
+                     yPos += lineSpacing;
+                }
 
-                doc.setFontSize(9);
-                doc.setFont(undefined, 'bold');
-                doc.text("OpenSearch Only:", leftMargin, yPos);
-                yPos += 5;
-                doc.setFont(undefined, 'normal');
-                let osDisclaimer = doc.splitTextToSize('The "OpenSearch Only" architecture retains data only for the duration specified in the Hot and Warm tier retention periods. The 3-year cost reflects running this architecture continuously, but it does not imply 3 years of data retention.', 180);
-                checkPageBreak();
-                doc.text(osDisclaimer, leftMargin, yPos);
-                yPos += osDisclaimer.length * 4 + lineSpacing;
+                if(selectedArchitectures.os) {
+                    doc.setFontSize(9);
+                    doc.setFont(undefined, 'bold');
+                    doc.text("OpenSearch Only:", leftMargin, yPos);
+                    yPos += 5;
+                    doc.setFont(undefined, 'normal');
+                    let osDisclaimer = doc.splitTextToSize('The "OpenSearch Only" architecture retains data only for the duration specified in the Hot and Warm tier retention periods. The 3-year cost reflects running this architecture continuously, but it does not imply 3 years of data retention.', 180);
+                    checkPageBreak();
+                    doc.text(osDisclaimer, leftMargin, yPos);
+                    yPos += osDisclaimer.length * 4 + lineSpacing;
+                }
+                
+                if(selectedArchitectures.iceberg || selectedArchitectures.hybrid) {
+                    doc.setFontSize(9);
+                    doc.setFont(undefined, 'bold');
+                    doc.text("Iceberg + Athena:", leftMargin, yPos);
+                    yPos += 5;
+                    doc.setFont(undefined, 'normal');
+                    let icebergDisclaimer = doc.splitTextToSize('This model calculates cost based on the total storage at the end of the retention period to show the "peak" or "steady-state" monthly cost. It also assumes up to 200 complex queries in Athena per month.', 180);
+                    checkPageBreak();
+                    doc.text(icebergDisclaimer, leftMargin, yPos);
+                    yPos += icebergDisclaimer.length * 4 + lineSpacing;
+                }
+                
+                // --- APPENDIX: DETAILED FORMULAS ---
+                checkPageBreak(40); // Need space for title
+                if (yPos > pageHeight - 80) {
+                     doc.addPage();
+                     yPos = 20;
+                }
 
+                doc.setFontSize(14);
                 doc.setFont(undefined, 'bold');
-                doc.text("Iceberg + Athena:", leftMargin, yPos);
-                yPos += 5;
-                doc.setFont(undefined, 'normal');
-                let icebergDisclaimer = doc.splitTextToSize('This model calculates cost based on the total storage at the end of the retention period to show the "peak" or "steady-state" monthly cost.', 180);
-                checkPageBreak();
-                doc.text(icebergDisclaimer, leftMargin, yPos);
+                doc.text("Appendix: Detailed Cost Formulas", leftMargin, yPos);
+                yPos += lineSpacing * 1.5;
+                
+                const appendixFormulas = {
+                    common: [
+                        {
+                            title: 'Daily Changed Files',
+                            lines: ['= Number of Files * (Daily Change Rate / 100)']
+                        },
+                        {
+                            title: 'Total Daily Ingest (GB)',
+                            lines: [
+                                '= Daily Metadata Ingest GB + Daily Audit Log Ingest GB',
+                                '  - Daily Metadata Ingest GB = (Daily Changed Files * Metadata Record Size KB) / 1,048,576',
+                                '  - Daily Audit Log Ingest GB = (Daily Changed Files * Audit Events * Audit Log Record Size KB) / 1,048,576'
+                            ]
+                        },
+                        {
+                            title: 'EMR Serverless Ingestion Cost',
+                            lines: ['= (Number of Files / 1,000,000,000) * EMR Cost Per Billion * 30.44']
+                        },
+                        {
+                            title: 'Fixed Infrastructure Cost',
+                            lines: ['= A fixed monthly charge for shared resources (ECS, RDS, etc.)']
+                        }
+                    ],
+                    os: [
+                        {
+                            title: 'OpenSearch Hot Tier Storage (GB, with replicas)',
+                            lines: ['= (Total Daily Ingest GB * Hot Tier Retention Days) * (1 + Replica Count)']
+                        },
+                        {
+                            title: 'OpenSearch Hot Tier Storage Cost (EBS GP3)',
+                            lines: ['= Hot Tier Storage GB * EBS GP3 Price Per GB']
+                        },
+                         {
+                            title: 'OpenSearch Hot Tier Compute Cost',
+                            lines: [
+                                '= Hot Node Count * EC2 Instance Hourly Price * 24 * 30.44',
+                                '  - Instance Type is dynamically selected based on Hot Tier Storage GB.',
+                                '  - Hot Node Count = MAX(2, CEILING(Hot Tier Storage GB / 500 GB per Node))'
+                            ]
+                        },
+                        {
+                            title: 'OpenSearch Warm Tier Storage (GB)',
+                            lines: ['= Total Daily Ingest GB * Warm Tier Retention Days']
+                        },
+                         {
+                            title: 'OpenSearch Warm Tier Storage Cost (S3)',
+                            lines: ['= Warm Tier Storage GB * S3 Standard Price Per GB']
+                        },
+                        {
+                            title: 'OpenSearch Warm Tier Compute Cost',
+                            lines: [
+                                '= Warm Node Count * EC2 Instance Hourly Price * 24 * 30.44',
+                                '  - Instance Type is dynamically selected based on Warm Tier Storage GB.',
+                                '  - Warm Node Count = MAX(2, CEILING(Warm Tier Storage GB / 4000 GB per Node))'
+                            ]
+                        }
+                    ],
+                    iceberg: [
+                        {
+                            title: 'Iceberg Peak Storage (GB)',
+                            lines: [
+                                '= Initial Metadata Size GB + Total Added Data GB',
+                                '  - Initial Metadata Size GB = (Number of Files * Metadata Record Size KB) / 1,048,576',
+                                '  - Total Added Data GB = Total Daily Ingest GB * Iceberg Retention Days'
+                            ]
+                        },
+                        {
+                            title: 'Iceberg Peak Storage Cost (S3)',
+                            lines: ['= Iceberg Peak Storage GB * S3 Standard Price Per GB']
+                        },
+                        {
+                            title: 'Athena Query Cost',
+                            lines: [
+                                '= (Iceberg Peak Storage GB / 1024) * (Athena Scan % / 100) * 200 Queries * Athena Price Per TB',
+                                '  - Assumes 200 complex queries per month.'
+                            ]
+                        },
+                    ]
+                };
+
+                const writeAppendixSection = (title, formulas) => {
+                    checkPageBreak(20);
+                    doc.setFontSize(12);
+                    doc.setFont(undefined, 'bold');
+                    doc.text(title, leftMargin, yPos);
+                    yPos += lineSpacing * 1.5;
+
+                    doc.setFontSize(9);
+                    formulas.forEach(formula => {
+                        checkPageBreak(formula.lines.length * lineSpacingSmall + lineSpacingSmall);
+                        doc.setFont(undefined, 'bold');
+                        doc.text(formula.title, leftMargin + 3, yPos);
+                        yPos += lineSpacingSmall;
+                        
+                        doc.setFont(undefined, 'normal');
+                        formula.lines.forEach(line => {
+                            checkPageBreak();
+                            doc.text(line, leftMargin + 6, yPos);
+                            yPos += lineSpacingSmall;
+                        });
+                        yPos += lineSpacingSmall; // Extra space between formulas
+                    });
+                };
+
+                if (selectedArchitectures.os) {
+                    let formulas = [...appendixFormulas.common, ...appendixFormulas.os];
+                    writeAppendixSection("OpenSearch Only Formulas", formulas);
+                }
+                if (selectedArchitectures.iceberg) {
+                    let formulas = [...appendixFormulas.common, ...appendixFormulas.iceberg];
+                     writeAppendixSection("Iceberg + Athena Formulas", formulas);
+                }
+                if (selectedArchitectures.hybrid) {
+                    let formulas = [...appendixFormulas.common, ...appendixFormulas.os, ...appendixFormulas.iceberg];
+                    const uniqueFormulas = formulas.filter((v,i,a)=>a.findIndex(t=>(t.title === v.title))===i) // remove duplicates
+                    writeAppendixSection("Hybrid (Both) Formulas", uniqueFormulas);
+                }
+
 
                 // Save PDF
-                doc.save('cloud_cost_analysis_detailed.pdf');
+                doc.save('cloud_cost_analysis_custom.pdf');
             }
             
             // --- Event Listener Attachments ---
@@ -1002,6 +1180,32 @@
                 }
             });
 
+            exportBtn.addEventListener('click', exportToCsv);
+
+            exportPdfBtn.addEventListener('click', () => {
+                 if (Object.keys(calculationDetails).length === 0) {
+                    alert("Please run the calculation first before exporting.");
+                    return;
+                }
+                exportOptionsModal.classList.add('show');
+            });
+            closeExportOptionsModalBtn.addEventListener('click', () => exportOptionsModal.classList.remove('show'));
+
+            generatePdfBtn.addEventListener('click', () => {
+                const selectedArchitectures = {
+                    os: document.getElementById('export-os').checked,
+                    iceberg: document.getElementById('export-iceberg').checked,
+                    hybrid: document.getElementById('export-hybrid').checked
+                };
+                if (!selectedArchitectures.os && !selectedArchitectures.iceberg && !selectedArchitectures.hybrid) {
+                    alert("Please select at least one architecture to export.");
+                    return;
+                }
+                exportOptionsModal.classList.remove('show');
+                generateAndExportPdf(selectedArchitectures);
+            });
+
+
             // Close modals on outside click
             window.addEventListener('click', (event) => {
                 if (event.target == awsCostsModal) awsCostsModal.classList.remove('show');
@@ -1009,11 +1213,8 @@
                 if (event.target == icebergDisclaimerModal) icebergDisclaimerModal.classList.remove('show');
                 if (event.target == mainInfoModal) mainInfoModal.classList.remove('show');
                 if (event.target == breakdownModal) breakdownModal.classList.remove('show');
+                if (event.target == exportOptionsModal) exportOptionsModal.classList.remove('show');
             });
-
-            exportBtn.addEventListener('click', exportToCsv);
-            exportPdfBtn.addEventListener('click', exportToPdf);
-
         });
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
